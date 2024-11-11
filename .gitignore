@@ -1,0 +1,7 @@
+build/
+install/
+log/
+Universal_Robots_*/
+src/.vscode
+src/lab8/.cache/
+.cache/
