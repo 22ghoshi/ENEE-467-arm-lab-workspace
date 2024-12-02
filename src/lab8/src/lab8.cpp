@@ -4,7 +4,7 @@
 void UR3eMoveInterface::drawCircleXY(double radius_meters)
 {
   if (radius_meters <= 0)
-    radius_meters = 0.1;
+    radius_meters = 0.55;
 
   /// TODO: Move the arm into a pose to draw the shape by setting a joint-space target
 
@@ -58,7 +58,7 @@ void UR3eMoveInterface::drawCircleXY(double radius_meters)
 
   /// TODO: Set the points on the circle as waypoints and execute a Cartesian plan
 
-  double points_to_generate = 36;
+  double points_to_generate = 20;
 
   for (double i = 0; i <= points_to_generate; i++) {
     auto pose = current_pose;
@@ -205,7 +205,7 @@ void UR3eMoveInterface::drawCircleYZ(double radius_meters)
     auto target_adjust_pose {current_pose};
     target_adjust_pose.position.y = robot_base_pose.position.y;
 
-    double lower_z_bound {getRobotBasePose().position.z + 0.15};
+    double lower_z_bound {getRobotBasePose().position.z + 0.25};
     double upper_z_bound {lower_z_bound + 2 * radius_meters};
     target_adjust_pose.position.z = (lower_z_bound + upper_z_bound) / 2;
 
@@ -292,6 +292,9 @@ void UR3eMoveInterface::drawSquareXY(double side_meters)
 
 
   /// TODO: Set the corners of the square as waypoints and execute a Cartesian plan
+  auto pose0 = current_pose;
+  pose0.position.y = -side_meters / 2;
+  pose0.position.x -= 0.1;
   auto pose1 = current_pose;
   pose1.position.x = side_meters / 2;
   pose1.position.y = -side_meters / 2;
@@ -304,12 +307,15 @@ void UR3eMoveInterface::drawSquareXY(double side_meters)
   auto pose4 = current_pose;
   pose4.position.x = -side_meters / 2;
   pose4.position.y = -side_meters / 2;
+  auto pose5 = current_pose;
+  pose5.position.y = -side_meters / 2;
+  pose5.position.x -= 0.05;
   // auto pose5 = current_pose;
   // pose5.position.x -= 0.1;
   // auto pose5 = current_pose;
   // pose5.position.x = side_meters / 2;
   // pose5.position.y = -side_meters / 2;
-  std::vector<geometry_msgs::msg::Pose> waypoints {pose1, pose2, pose3, pose4, current_pose};
+  std::vector<geometry_msgs::msg::Pose> waypoints {pose0, pose1, pose2, pose3, pose4, pose5};
   RCLCPP_INFO(this->get_logger(), "current pose(%f, %f, %f)", pose1.position.x, pose1.position.y, pose1.position.z);
   RCLCPP_INFO(this->get_logger(), "current pose(%f, %f, %f)", pose2.position.x, pose2.position.y, pose2.position.z);
   RCLCPP_INFO(this->get_logger(), "current pose(%f, %f, %f)", pose3.position.x, pose3.position.y, pose3.position.z);
@@ -345,7 +351,89 @@ void UR3eMoveInterface::drawSquareXY(double side_meters)
 void UR3eMoveInterface::drawSquareYZ(double side_meters)
 {
   if (side_meters <= 0)
-    side_meters = 0.425;
+    side_meters = 0.45 * 0.5;
+
+  /// TODO: Move the arm into a pose to draw the shape by setting a joint-space target
+  {
+    std::vector<double> target_joint_positions {M_PI_2, -M_PI_2, M_PI_2, -M_PI, -M_PI_2, 0};
+    move_group_interface_->setJointValueTarget(target_joint_positions);
+
+    moveit::planning_interface::MoveGroupInterface::Plan motion_plan;
+    bool plan_success {planToJointSpaceGoal(target_joint_positions, motion_plan)};
+
+    if (plan_success)
+      move_group_interface_->execute(motion_plan);
+  }
+
+  {
+    auto current_pose {move_group_interface_->getCurrentPose().pose};
+    auto robot_base_pose {getRobotBasePose()};
+
+    auto target_adjust_pose {current_pose};
+    target_adjust_pose.position.y = robot_base_pose.position.y;
+
+    double lower_z_bound {getRobotBasePose().position.z + 0.15};
+    double upper_z_bound {lower_z_bound + 2 * side_meters};
+    target_adjust_pose.position.z = (lower_z_bound + upper_z_bound) / 2;
+
+    std::vector<geometry_msgs::msg::Pose> waypoints {current_pose, target_adjust_pose};
+
+    moveit_msgs::msg::RobotTrajectory trajectory;
+    bool plan_success {planCartesianPath(waypoints, trajectory)};
+
+    if (plan_success)
+      move_group_interface_->execute(trajectory);
+  }
+
+  /// TODO: Set the points on the circle as waypoints and execute a Cartesian plan
+  {
+    std::vector<geometry_msgs::msg::Pose> waypoints;
+    auto initial_pose {move_group_interface_->getCurrentPose().pose};
+    waypoints.push_back(initial_pose);
+
+    for (double theta {M_PI / 4}; theta <= 2 * M_PI; theta += M_PI / 2) {
+      geometry_msgs::msg::Pose point_on_shape {initial_pose};
+
+      point_on_shape.position.y += side_meters * std::cos(theta);
+      point_on_shape.position.z += side_meters * std::sin(theta);
+      RCLCPP_INFO(this->get_logger(), "current pose(%f, %f, %f)", point_on_shape.position.x, point_on_shape.position.y, point_on_shape.position.z);
+
+
+      waypoints.push_back(point_on_shape);
+    }
+    waypoints.push_back(waypoints.at(1));
+
+    moveit_msgs::msg::RobotTrajectory trajectory;
+    bool plan_success {planCartesianPath(waypoints, trajectory)};
+    auto track_request {std::make_shared<lab8::srv::TrackRequest::Request>()};
+
+
+    track_request->tf_root_frame_name = move_group_interface_->getPlanningFrame();
+    track_request->tf_tip_frame_name = move_group_interface_->getEndEffectorLink();
+
+    track_request->plot_title = "A Square in the vertical plane";
+    track_request->plot_axis_x = lab8::srv::TrackRequest::Request::Y_AXIS;
+    track_request->plot_axis_y = lab8::srv::TrackRequest::Request::Z_AXIS;
+
+    track_request->status = lab8::srv::TrackRequest::Request::START;
+
+    bool track_request_success {sendEEFTrackRequest(track_request)};
+
+    if (plan_success && track_request_success)
+      move_group_interface_->execute(trajectory);
+
+    track_request->status = lab8::srv::TrackRequest::Request::STOP;
+    sendEEFTrackRequest(track_request);
+
+    if (plan_success)
+      move_group_interface_->execute(trajectory);
+  }
+
+  /// TODO: Move the robot back to its home position by setting a named target
+  {
+    move_group_interface_->setNamedTarget("up");
+    move_group_interface_->move();
+  }
 
   /// TODO: Move the arm into a pose to draw the shape by setting a joint-space target
 
@@ -353,4 +441,3 @@ void UR3eMoveInterface::drawSquareYZ(double side_meters)
 
   /// TODO: Move the robot back to its home position by setting a named target
 }
-// https://enee467.readthedocs.io/en/latest/Lab8.html#writing-the-code
